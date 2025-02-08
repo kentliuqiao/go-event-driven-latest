@@ -82,8 +82,8 @@ func (h Handler) PostBookTickets(c echo.Context) error {
 		return err
 	}
 
-	req.BookingID = uuid.NewString()
-	err = h.bookingRepo.Add(c.Request().Context(), req)
+	req.BookingID = uuid.New()
+	err = h.bookingRepo.AddBooking(c.Request().Context(), req)
 	if err != nil {
 		return fmt.Errorf("failed to add booking: %w", err)
 	}

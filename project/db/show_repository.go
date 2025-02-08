@@ -5,27 +5,28 @@ import (
 	"fmt"
 	"tickets/entities"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
-type ShowRepository struct {
+type ShowsRepository struct {
 	db *sqlx.DB
 }
 
-func NewShowRepository(db *sqlx.DB) ShowRepository {
+func NewShowsRepository(db *sqlx.DB) ShowsRepository {
 	if db == nil {
-		panic("missing db")
+		panic("db is nil")
 	}
-	return ShowRepository{db: db}
+
+	return ShowsRepository{db: db}
 }
 
-func (r ShowRepository) Add(ctx context.Context, show entities.Show) error {
-	_, err := r.db.ExecContext(
-		ctx,
-		`INSERT INTO shows (show_id, dead_nation_id, number_of_tickets, start_time, title, venue)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (show_id) DO NOTHING
-`, show.ShowID, show.DeadNationID, show.NumberOfTickets, show.StartTime, show.Title, show.Venue)
+func (s ShowsRepository) AddShow(ctx context.Context, show entities.Show) error {
+	_, err := s.db.NamedExecContext(ctx, `
+		INSERT INTO 
+		    shows (show_id, dead_nation_id, number_of_tickets, start_time, title, venue) 
+		VALUES (:show_id, :dead_nation_id, :number_of_tickets, :start_time, :title, :venue)
+		`, show)
 	if err != nil {
 		return fmt.Errorf("could not add show: %w", err)
 	}
@@ -33,27 +34,34 @@ ON CONFLICT (show_id) DO NOTHING
 	return nil
 }
 
-func (r ShowRepository) Remove(showID string) error {
-	_, err := r.db.Exec(
-		`DELETE FROM shows WHERE show_id = $1`,
-		showID)
-	if err != nil {
-		return fmt.Errorf("could not delete show: %w", err)
-	}
-
-	return nil
-}
-
-func (r ShowRepository) FindAll() ([]entities.Show, error) {
+func (s ShowsRepository) AllShows(ctx context.Context) ([]entities.Show, error) {
 	var shows []entities.Show
-
-	err := r.db.Select(
-		&shows,
-		`SELECT show_id, dead_nation_id, number_of_tickets, start_time, title, venue FROM shows`,
-	)
+	err := s.db.SelectContext(ctx, &shows, `
+		SELECT 
+		    * 
+		FROM 
+		    shows
+	`)
 	if err != nil {
-		return nil, fmt.Errorf("could not list shows: %w", err)
+		return nil, fmt.Errorf("could not get shows: %w", err)
 	}
 
 	return shows, nil
+}
+
+func (s ShowsRepository) ShowByID(ctx context.Context, showID uuid.UUID) (entities.Show, error) {
+	var show entities.Show
+	err := s.db.GetContext(ctx, &show, `
+		SELECT 
+		    * 
+		FROM 
+		    shows
+		WHERE
+		    show_id = $1
+	`, showID)
+	if err != nil {
+		return entities.Show{}, fmt.Errorf("could not get show: %w", err)
+	}
+
+	return show, nil
 }

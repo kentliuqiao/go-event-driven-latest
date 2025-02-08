@@ -25,7 +25,7 @@ func (h Handler) PostShows(c echo.Context) error {
 		Venue:           shows.Venue,
 	}
 
-	err = h.showRepo.Add(c.Request().Context(), show)
+	err = h.showRepo.AddShow(c.Request().Context(), show)
 	if err != nil {
 		return fmt.Errorf("failed to add show: %w", err)
 	}

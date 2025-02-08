@@ -7,9 +7,9 @@ import (
 	ticketsHttp "tickets/http"
 	"tickets/message"
 	"tickets/message/event"
+	"tickets/message/outbox"
 
 	"github.com/ThreeDotsLabs/go-event-driven/common/log"
-	"github.com/ThreeDotsLabs/watermill/components/cqrs"
 	watermillMessage "github.com/ThreeDotsLabs/watermill/message"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
@@ -23,17 +23,18 @@ func init() {
 }
 
 type Service struct {
-	db              *sqlx.DB
+	dbConn          *sqlx.DB
 	watermillRouter *watermillMessage.Router
 	echoRouter      *echo.Echo
 }
 
 func New(
-	db *sqlx.DB,
+	dbConn *sqlx.DB,
 	redisClient *redis.Client,
 	spreadsheetsService event.SpreadsheetsAPI,
 	receiptsService event.ReceiptsService,
 	filesAPI event.FilesAPI,
+	deadNationClient event.DeadNationClient,
 ) Service {
 	watermillLogger := log.NewWatermill(log.FromContext(context.Background()))
 
@@ -41,38 +42,35 @@ func New(
 	redisPublisher = message.NewRedisPublisher(redisClient, watermillLogger)
 	redisPublisher = log.CorrelationPublisherDecorator{Publisher: redisPublisher}
 
-	marshaler := cqrs.JSONMarshaler{
-		GenerateName: cqrs.StructName,
-	}
-	eventBus, err := cqrs.NewEventBusWithConfig(
+	eventBus := event.NewBus(redisPublisher)
+
+	ticketsRepo := db.NewTicketRepository(dbConn)
+	showsRepo := db.NewShowsRepository(dbConn)
+	bookingsRepository := db.NewBookingsRepository(dbConn)
+
+	evHandler := event.NewHandler(dbConn, spreadsheetsService, receiptsService, filesAPI, eventBus, ticketsRepo, showsRepo, deadNationClient)
+
+	postgresSubscriber := outbox.NewPostgresSubscriber(dbConn.DB, watermillLogger)
+	eventProcessorConfig := event.NewProcessorConfig(redisClient, watermillLogger)
+
+	watermillRouter := message.NewWatermillRouter(
+		postgresSubscriber,
 		redisPublisher,
-		cqrs.EventBusConfig{
-			GeneratePublishTopic: func(params cqrs.GenerateEventPublishTopicParams) (string, error) {
-				return params.EventName, nil
-			},
-			Marshaler: marshaler,
-		},
-	)
-	if err != nil {
-		panic(err)
-	}
-
-	handler := event.NewHandler(db, spreadsheetsService, receiptsService, filesAPI, eventBus)
-
-	watermillRouter := message.NewWatermillEventProcessor(
-		handler,
-		redisClient,
+		eventProcessorConfig,
+		evHandler,
 		watermillLogger,
 	)
 
 	echoRouter := ticketsHttp.NewHttpRouter(
 		eventBus,
 		spreadsheetsService,
-		db,
+		ticketsRepo,
+		showsRepo,
+		bookingsRepository,
 	)
 
 	return Service{
-		db,
+		dbConn,
 		watermillRouter,
 		echoRouter,
 	}
@@ -81,7 +79,7 @@ func New(
 func (s Service) Run(
 	ctx context.Context,
 ) error {
-	if err := db.InitializeDbSchema(s.db); err != nil {
+	if err := db.InitializeDbSchema(s.dbConn); err != nil {
 		return err
 	}
 
